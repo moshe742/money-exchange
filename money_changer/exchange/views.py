@@ -1,4 +1,5 @@
 from datetime import datetime as dt
+from datetime import timedelta
 
 from django.shortcuts import render
 from django.views import View
@@ -18,10 +19,16 @@ def parse_xml(xml_data):
 
 
 def get_currencies(xml_root):
-    result = {}
+    result = {
+        'NIS': {
+            'currency_code': 'NIS',
+            'rate': 1.0,
+            'unit': 1.0,
+        }
+    }
     for currency in xml_root:
+        d = {}
         if currency.tag == 'CURRENCY':
-            d = {}
             for item in currency:
                 if item.tag in ['RATE', 'UNIT']:
                     d[item.tag.lower()] = float(item.text)
@@ -37,6 +44,11 @@ def shekel_to_foreign(rate, amount, num_of_units):
 
 def foreign_to_shekel(rate, amount, num_of_units):
     return rate * amount / num_of_units
+
+
+def get_rate_unit(currencies, currency):
+    return currencies[currency]['rate'], currencies[currency]['unit']
+
 
 
 class ExchangeView(View):
@@ -90,14 +102,31 @@ class ExchangeView(View):
             }
 
             res = requests.get(url, params=payload)
+            num_days = 1
+            while 'ERROR' in res.text:
+                date_to_check = dt.strptime(payload['rdate'], '%Y%m%d')
+                payload['rdate'] = (date_to_check - timedelta(days=num_days)).strftime('%Y%m%d')
+
+                res = requests.get(url, params=payload)
+                num_days -= 1
+
             parsed_xml = parse_xml(res.text)
             currencies = get_currencies(parsed_xml)
 
-            from_currency_rate = currencies[from_currency]['rate']
-            from_currency_unit = currencies[from_currency]['unit']
+            from_currency_rate, from_currency_unit, to_currency_rate, to_currency_unit = 1, 1, 1, 1
 
-            to_currency_rate = currencies[to_currency]['rate']
-            to_currency_unit = currencies[to_currency]['unit']
+            try:
+                from_currency_rate, from_currency_unit = get_rate_unit(currencies, from_currency)
+            except KeyError:
+                pass
+
+            try:
+                to_currency_rate, to_currency_unit = get_rate_unit(currencies, to_currency)
+            except KeyError:
+                pass
+
+            # to_currency_rate = currencies[to_currency]['rate']
+            # to_currency_unit = currencies[to_currency]['unit']
 
             if from_currency == 'NIS':
                 result = shekel_to_foreign(to_currency_rate, currency_amount, to_currency_unit)
